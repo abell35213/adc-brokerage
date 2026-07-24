@@ -1,0 +1,186 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: adc-backend
+  namespace: adc
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: adc-backend
+  template:
+    metadata:
+      labels:
+        app: adc-backend
+    spec:
+      serviceAccountName: adc-backend
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          # IMAGE_TAG is rendered by the deploy pipeline. Never use ":latest" in production
+          # so that rollouts are deterministic and rollbacks are possible.
+          image: ghcr.io/your-org/adc-backend:${ADC_BACKEND_IMAGE_TAG}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          env:
+            - name: APP_ENV
+              value: prod
+            - name: SECRET_PROVIDER
+              value: aws_secrets_manager
+            - name: AWS_REGION
+              value: us-east-1
+            - name: AWS_SECRETS_MANAGER_SECRET_ID
+              valueFrom:
+                secretKeyRef:
+                  name: adc-runtime-secret-ref
+                  key: secret_id
+            - name: AWS_SECRETS_MANAGER_VERSION_STAGE
+              valueFrom:
+                secretKeyRef:
+                  name: adc-runtime-secret-ref
+                  key: version_stage
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: adc-runtime-settings
+                  key: REDIS_URL
+            - name: STORAGE_BACKEND
+              value: s3
+            - name: S3_ARTIFACTS_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: adc-runtime-settings
+                  key: S3_ARTIFACTS_BUCKET
+            - name: S3_EXPORTS_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: adc-runtime-settings
+                  key: S3_EXPORTS_BUCKET
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: adc-worker
+  namespace: adc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: adc-worker
+  template:
+    metadata:
+      labels:
+        app: adc-worker
+    spec:
+      serviceAccountName: adc-backend
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: ghcr.io/your-org/adc-backend:${ADC_BACKEND_IMAGE_TAG}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+          command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info"]
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          env:
+            - name: APP_ENV
+              value: prod
+            - name: SECRET_PROVIDER
+              value: aws_secrets_manager
+            - name: AWS_REGION
+              value: us-east-1
+            - name: AWS_SECRETS_MANAGER_SECRET_ID
+              valueFrom:
+                secretKeyRef:
+                  name: adc-runtime-secret-ref
+                  key: secret_id
+            - name: AWS_SECRETS_MANAGER_VERSION_STAGE
+              valueFrom:
+                secretKeyRef:
+                  name: adc-runtime-secret-ref
+                  key: version_stage
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: adc-runtime-settings
+                  key: REDIS_URL
+            - name: STORAGE_BACKEND
+              value: s3
+            - name: S3_ARTIFACTS_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: adc-runtime-settings
+                  key: S3_ARTIFACTS_BUCKET
+            - name: S3_EXPORTS_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: adc-runtime-settings
+                  key: S3_EXPORTS_BUCKET
+      volumes:
+        - name: tmp
+          emptyDir: {}
